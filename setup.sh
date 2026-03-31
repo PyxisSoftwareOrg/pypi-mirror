@@ -7,6 +7,7 @@ set -euo pipefail
 # Usage:
 #   bash setup.sh              # Full setup (infra + download + index + push)
 #   bash setup.sh --refresh    # Skip infra, re-download and sync
+#   bash setup.sh --upgrade    # Download latest versions of all packages (keeps existing)
 #
 # Requires: aws cli, python3, pip3 (poetry optional — falls back to lock parser)
 ###############################################################################
@@ -15,8 +16,12 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "${SCRIPT_DIR}/config.env"
 
 REFRESH_ONLY=false
+UPGRADE_MODE=false
 if [[ "${1:-}" == "--refresh" ]]; then
     REFRESH_ONLY=true
+elif [[ "${1:-}" == "--upgrade" ]]; then
+    REFRESH_ONLY=true
+    UPGRADE_MODE=true
 fi
 
 PKG_DIR="${SCRIPT_DIR}/packages"
@@ -222,6 +227,20 @@ export_requirements() {
 }
 
 ###############################################################################
+# Phase 2b: Generate unpinned requirements (upgrade mode)
+###############################################################################
+generate_unpinned_reqs() {
+    log "Phase 2b: Generating unpinned requirements for upgrade"
+    REQS_UNPINNED="${SCRIPT_DIR}/requirements-unpinned.txt"
+    # Strip version specifiers, extras, and comments — keep just package names
+    sed -E 's/\[.*\]//g; s/[<>=!~;].*//' "${REQS_ALL}" \
+        | grep -E '^[a-zA-Z]' \
+        | sort -u > "${REQS_UNPINNED}"
+    UNPINNED_COUNT=$(wc -l < "${REQS_UNPINNED}" | tr -d ' ')
+    log "Generated ${UNPINNED_COUNT} unpinned package names"
+}
+
+###############################################################################
 # Phase 3: Download packages per platform
 ###############################################################################
 download_packages() {
@@ -230,6 +249,13 @@ download_packages() {
     mkdir -p "${PKG_DIR}/linux-amd64" "${PKG_DIR}/linux-arm64" "${PKG_DIR}/macos-arm64" "${PKG_DIR}/win-amd64" "${PKG_DIR}/noarch" "${PKG_DIR}/all"
 
     PYPI="https://pypi.org/simple/"
+
+    # In upgrade mode, download latest (unpinned) in addition to pinned
+    DOWNLOAD_REQS="${REQS_ALL}"
+    if [[ "${UPGRADE_MODE}" == true ]]; then
+        DOWNLOAD_REQS="${REQS_UNPINNED}"
+        log "Upgrade mode: downloading latest versions (existing versions will be kept)"
+    fi
 
     # Download function: iterates per-package so one failure doesn't abort all
     download_for_platform() {
@@ -257,7 +283,7 @@ download_packages() {
     }
 
     # --- Linux amd64 (all deps — needed for Docker dev builds too) ---
-    download_for_platform "linux/amd64" "${PKG_DIR}/linux-amd64" "${REQS_ALL}" \
+    download_for_platform "linux/amd64" "${PKG_DIR}/linux-amd64" "${DOWNLOAD_REQS}" \
         --python-version 311 --implementation cp --only-binary=:all: --abi cp311 \
         --platform manylinux2014_x86_64 \
         --platform manylinux_2_17_x86_64 \
@@ -265,7 +291,7 @@ download_packages() {
         --platform linux_x86_64
 
     # --- Linux arm64 (local Docker on Apple Silicon) ---
-    download_for_platform "linux/arm64" "${PKG_DIR}/linux-arm64" "${REQS_ALL}" \
+    download_for_platform "linux/arm64" "${PKG_DIR}/linux-arm64" "${DOWNLOAD_REQS}" \
         --python-version 311 --implementation cp --only-binary=:all: --abi cp311 \
         --platform manylinux2014_aarch64 \
         --platform manylinux_2_17_aarch64 \
@@ -273,7 +299,7 @@ download_packages() {
         --platform linux_aarch64
 
     # --- macOS arm64 (dev) ---
-    download_for_platform "macOS/arm64" "${PKG_DIR}/macos-arm64" "${REQS_ALL}" \
+    download_for_platform "macOS/arm64" "${PKG_DIR}/macos-arm64" "${DOWNLOAD_REQS}" \
         --python-version 311 --implementation cp --only-binary=:all: --abi cp311 \
         --platform macosx_11_0_arm64 \
         --platform macosx_12_0_arm64 \
@@ -281,12 +307,12 @@ download_packages() {
         --platform macosx_14_0_arm64
 
     # --- Windows amd64 ---
-    download_for_platform "Windows/amd64" "${PKG_DIR}/win-amd64" "${REQS_ALL}" \
+    download_for_platform "Windows/amd64" "${PKG_DIR}/win-amd64" "${DOWNLOAD_REQS}" \
         --python-version 311 --implementation cp --only-binary=:all: --abi cp311 \
         --platform win_amd64
 
     # --- Pure Python (noarch) ---
-    download_for_platform "noarch" "${PKG_DIR}/noarch" "${REQS_ALL}" \
+    download_for_platform "noarch" "${PKG_DIR}/noarch" "${DOWNLOAD_REQS}" \
         --python-version 311 --implementation cp --only-binary=:all: \
         --abi none --platform any
 
@@ -384,7 +410,16 @@ if [[ "${REFRESH_ONLY}" == false ]]; then
     setup_infra
 fi
 
-export_requirements
+if [[ "${UPGRADE_MODE}" == true ]]; then
+    if [[ ! -f "${REQS_ALL}" ]]; then
+        export_requirements
+    else
+        log "Using existing ${REQS_ALL} for package names"
+    fi
+    generate_unpinned_reqs
+else
+    export_requirements
+fi
 download_packages
 generate_index
 push_to_s3

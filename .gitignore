@@ -1,3 +1,5 @@
 packages/
 index/
 *.log
+lambda/build/
+lambda/lambda.zip

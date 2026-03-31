@@ -11,6 +11,12 @@ A self-hosted PyPI mirror that extracts dependencies from `orbit-core-agent`'s p
 ```bash
 bash setup.sh              # Full setup: infra + download + index + deploy
 bash setup.sh --refresh    # Skip infra, re-run phases 2-6 (re-download & sync)
+bash setup.sh --upgrade    # Download latest versions of all packages (keeps existing)
+
+python3 scripts/check_upgrades.py   # Compare mirror versions against PyPI latest
+
+bash lambda/deploy-lambda.sh            # Deploy auto-updater Lambda + EventBridge
+bash lambda/deploy-lambda.sh --invoke   # Deploy + run immediately
 ```
 
 ## Architecture
@@ -28,6 +34,11 @@ bash setup.sh --refresh    # Skip infra, re-run phases 2-6 (re-download & sync)
 - `export_from_lock.py` — Parses poetry.lock TOML directly (fallback when poetry CLI missing)
 - `generate_index.py` — Generates PEP 503-compliant HTML index with SHA256 fragment URLs
 - `verify_mirror.py` — Validates all required packages have at least one wheel present
+- `check_upgrades.py` — Compares mirror package versions against PyPI latest, reports upgradeable packages
+
+**Lambda auto-updater** (in `lambda/`):
+- `handler.py` — Lambda function that checks PyPI for newer versions daily, downloads new wheels for all 5 platforms, uploads to S3, regenerates the PEP 503 index, and invalidates CloudFront. Sends SNS notification summary.
+- `deploy-lambda.sh` — Deploys the Lambda, IAM role, EventBridge daily schedule (6 AM UTC), and SNS topic using AWS CLI
 
 ## Configuration
 
@@ -39,6 +50,7 @@ bash setup.sh --refresh    # Skip infra, re-run phases 2-6 (re-download & sync)
 - Index uses relative hrefs (`../../packages/{filename}`) so it works behind any CDN prefix
 - Downloads continue on per-package failure (no abort on missing platform wheel)
 - `packages/` and `index/` are gitignored build artifacts; `requirements-*.txt` are tracked
+- `lambda/build/` and `lambda/lambda.zip` are gitignored build artifacts
 
 ## Mirror URL
 

@@ -12,7 +12,7 @@ def normalize(name: str) -> str:
     return re.sub(r"[-_.]+", "-", name).lower()
 
 
-def extract_package_name(filename: str) -> str | None:
+def extract_package_name(filename):
     if filename.endswith(".whl"):
         return normalize(filename.split("-")[0])
     elif filename.endswith(".tar.gz"):
@@ -33,7 +33,7 @@ def sha256_file(filepath: Path) -> str:
 
 
 def generate_index(packages_dir: Path, index_dir: Path):
-    package_files: dict[str, list[tuple[str, str]]] = defaultdict(list)
+    package_files = defaultdict(list)
 
     for f in sorted(packages_dir.iterdir()):
         if not f.is_file():
